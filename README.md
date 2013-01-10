@@ -28,3 +28,7 @@ proximity_server - Core <br />
  1. Install Modules & Software <br />
  2. Configure proximity_config with needed details <br />
  3. Execute proximity_initdb <br />
+
+
+
+Mailing List: https://oid.tisf.net/mailman/listinfo/proximity
