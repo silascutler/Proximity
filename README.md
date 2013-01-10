@@ -23,3 +23,8 @@ proximity_controller - Tool for Adding / Removing / Listing Filters<br />
 proximity_initdb - Creates Database scheme <br />
 proximity_reporter - Generates reports / Pull data / Search<br />
 proximity_server - Core <br />
+<br />
+<b>Installation</b>
+ 1. Install Modules & Software <br />
+ 2. Configure proximity_config with needed details <br />
+ 3. Execute proximity_initdb <br />
