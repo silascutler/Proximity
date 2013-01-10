@@ -1,0 +1,188 @@
+#!/usr/bin/perl
+#############################################################################################
+#
+#__________                     .__        .__  __
+#\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+# |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+# |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+# |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+#                              \/        \/          \/
+#
+# proximity_initdb
+#       + Initialize or remove current database for proximity
+#
+# Copyright (C) 2012, Silas Cutler
+#      <Silas.Cutler@BlackListThisDomain.com / SCutler@SecureWorks.com>
+#
+# This program is free software; you can redistribute it and/or modify it without restriction.
+#      Any implimentation or profitting from this code requires the consent of the original 
+#      author.  Any updates or impovements are not required to be shared with the author, but 
+#      encoraged.  
+#
+# This software is provided as is.  The author or any associated parties are not liable for 
+#      any use of this software or any damage that may occur from this software.
+#
+#############################################################################################
+#	v0.7.5
+#############################################################################################
+
+use strict;
+use warnings;
+use DBI;
+
+my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
+
+my $database_host = $config->param("Database.database_host");
+my $database_name = $config->param("Database.database_name");
+my $database_user = $config->param("Database.database_user");
+my $database_password = $config->param("Database.database_password");
+
+
+
+
+##########################################################################################
+####  Remove Database
+##########################################################################################
+# If the /-nuke/ is specified, it will DROP the current database
+if ($#ARGV == 0 ) {
+        if ($ARGV[0] =~ /nuke/){
+                print "Wiping Database - $database_name!!!\n\n";
+                system ("mysql -e \"drop database $database_name\" ");
+                exit;
+        };
+        exit;
+}
+##########################################################################################
+####  Main
+##########################################################################################
+
+### Create database.
+print "Creating Database Scheme . . .\n\n";
+system ("mysql -e \"create database $database_name\" ");
+
+### Connect to created Database
+my $dbh = DBI->connect('dbi:mysql:'. $database_name,$database_user,$database_password) or die "Connection Error: $DBI::errstr\n";
+
+
+# Create Table = domain_filters
+print "Processing . . . table = filters\n";
+my $sql_statement = "
+        CREATE TABLE filters (
+        	filter_id INT( 6 ) NOT NULL AUTO_INCREMENT,
+                filter_port INT(6),
+                filter_protocol VARCHAR(10),
+                filter_pcre text,
+                filter_note text,
+                filter_status text,
+                added text,
+            PRIMARY KEY (filter_id)
+        )
+        ";
+
+my $sth = $dbh->prepare($sql_statement);
+        $sth->execute;
+
+
+# Create Table = pcap_stats
+print "Processing . . . table = pcap_stats\n";
+$sql_statement = "
+        CREATE TABLE pcap_stats (
+            pcap_id INT( 6 ) NOT NULL AUTO_INCREMENT,
+            pcap_start_time int(10), 
+			pcap_file varchar(300),
+			pcap_processed_time int(10),
+			PRIMARY KEY (pcap_id)
+        )
+        ";
+
+$sth = $dbh->prepare($sql_statement);
+        $sth->execute;
+
+# Create Table = infected_hosts
+print "Processing . . . table = filter_matches\n";
+$sql_statement = "
+        CREATE TABLE filter_matches (
+			source_ip varchar(20),
+			destination_port varchar(20),
+			filter_id int (6) REFERENCES filters(filter_id),
+			timestamp int(10),
+			pcap_file varchar(300),
+			count int(20),
+			PRIMARY KEY (source_ip,filter_id,pcap_file)
+        )
+        ";
+
+$sth = $dbh->prepare($sql_statement);
+        $sth->execute;
+
+
+# Create Table = connection_log
+print "Processing . . . table = connection_log\n";
+$sql_statement = "
+        CREATE TABLE connection_log (
+			source_ip varchar(20),
+			protocol text,
+			destination_port int (6),
+			timestamp int(10),
+			asn	varchar(20),
+			asn_name text,
+			pcap_file varchar(300),
+			count int(10),
+			PRIMARY KEY (source_ip,destination_port,pcap_file)
+        )
+        ";
+
+$sth = $dbh->prepare($sql_statement);
+        $sth->execute;
+	
+# Create Table = http_hosts
+print "Processing . . . table = http_hosts\n";
+$sql_statement = "
+        CREATE TABLE http_hosts (
+        	hostname varchar(200),
+			source_ip varchar(20),
+			destination_port int(6),
+			pcap_file varchar(300),
+			timestamp int(10),
+			count int(10),
+			PRIMARY KEY (hostname, source_ip, pcap_file)
+        )
+        ";
+
+$sth = $dbh->prepare($sql_statement);
+        $sth->execute;
+
+	# Create Table = http_hosts
+print "Processing . . . table = dns_lookups\n";
+$sql_statement = "
+        CREATE TABLE dns_lookups (
+        	source_ip varchar(30),
+			query varchar(300),
+			record_type VARCHAR(10),
+			returned varchar(300),
+			timestamp VARCHAR(300),
+			count int(200),
+			PRIMARY KEY (source_ip, query, timestamp)
+        )
+        ";
+
+$sth = $dbh->prepare($sql_statement);
+        $sth->execute;
+	
+print "Processing . . . table = dns_log_stats\n";
+$sql_statement = "
+        CREATE TABLE dns_log_stats (
+            dns_log_id INT( 6 ) NOT NULL AUTO_INCREMENT,
+			dns_file varchar(300),
+			dns_processed_time int(10),
+			PRIMARY KEY (dns_log_id)
+        )
+        ";
+
+$sth = $dbh->prepare($sql_statement);
+        $sth->execute;	
+print "Database Scheme Created!!\n\n";
+
+
+
+###//Fin

@@ -1,0 +1,616 @@
+#!/usr/bin/perl
+#############################################################################################
+#
+#__________                     .__        .__  __
+#\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+# |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+# |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+# |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+#                              \/        \/          \/
+#
+# proximity_server
+#
+# Copyright (C) 2012, Silas Cutler
+#      <Silas.Cutler@BlackListThisDomain.com / SCutler@SecureWorks.com>
+#
+# This program is free software; you can redistribute it and/or modify it without restriction.
+#      Any implimentation or profitting from this code requires the consent of the original 
+#      author.  Any updates or impovements are not required to be shared with the author, but 
+#      encoraged.  
+#
+# This software is provided as is.  The author or any associated parties are not liable for 
+#      any use of this software or any damage that may occur from this software.
+#
+#############################################################################################
+#	v0.7.5
+#############################################################################################
+
+use strict;
+use warnings;
+use DBI;
+use Net::Pcap;
+use NetPacket::Ethernet;
+use NetPacket::IP;
+use NetPacket::TCP;
+use NetPacket::UDP;
+use IO::Socket::INET;
+use Getopt::Long;
+use PerlIO::gzip;
+use Time::Local;
+use Proc::Daemon;
+use Config::Simple;
+
+my ($help, $user_pcap_path, $user_dns_path, $daemon);
+
+#############
+# + Help         - Displays Help Menu // Usage()
+# + import-pcap  - Specifies path to Import Pcaps from
+# + import-DNS   - Specifies path to Import DNS Logs from
+#
+usage() if ( (  ! GetOptions(
+    'help|?'	=>  \$help,
+    'import-pcap|ip=s'	=>	\$user_pcap_path,
+    'import-dns|id=s'	=>	\$user_dns_path,
+    'daemon|D'          =>	\$daemon
+            )or defined $help  )  );
+
+
+my $err;
+my %raw_pcap_files = ();
+my %raw_dns_logs = ();
+my %tcp_pcap_filters = ();
+my %udp_pcap_filters = ();
+my $process = "true";
+
+
+my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
+
+my $database_host = $config->param("Database.database_host");
+my $database_name = $config->param("Database.database_name");
+my $database_user = $config->param("Database.database_user");
+my $database_password = $config->param("Database.database_password");
+
+my $sinkhole_IP_address = $config->param("SinkholeDetails.sinkhole_IP_address");
+
+my $pcap_proc_enabled = $config->param("Processing.pcap_proc_enabled");
+my $pcap_path = $config->param("Processing.pcap_path");
+
+my $dns_proc_enabled = $config->param("Processing.dns_proc_enabled");
+my $dns_path = $config->param("Processing.dns_path");
+
+
+my $dbh = DBI->connect('dbi:mysql:'. $database_name,$database_user,$database_password) or die "Connection Error: $DBI::errstr\n";
+$dbh->{mysql_auto_reconnect} = 1;
+my $sth_infected = $dbh->prepare('INSERT INTO filter_matches 
+										(source_ip, destination_port, filter_id, timestamp, pcap_file, count) 
+										VALUES ( ? , ? , ? , ? , ?, 1) ON DUPLICATE KEY UPDATE count=count+1');
+
+my $sth_connection = $dbh->prepare('INSERT INTO connection_log 
+										(source_ip, protocol, destination_port, pcap_file, timestamp, count) 
+										VALUES ( ? , ? , ? , ? , ? , ?) ON DUPLICATE KEY UPDATE count=count + ?');
+
+my $sth_http_hosts = $dbh->prepare('INSERT INTO http_hosts 
+										(hostname, source_ip, destination_port, pcap_file, timestamp, count) VALUES ( ? , ? , ? ,  ? , ?, 1) ON DUPLICATE KEY UPDATE count=count + 1');
+										
+my $sth_dns_request = $dbh->prepare('INSERT INTO dns_lookups 
+										(source_ip, query, record_type, returned, timestamp, count) VALUES ( ? , ? , ? ,  ? , ?, ?) ON DUPLICATE KEY UPDATE count=count + 1');
+
+my $sth_proc_pcap = $dbh->prepare('INSERT INTO pcap_stats 
+										( pcap_file, pcap_processed_time) VALUES ( ? , ? )');
+
+my $sth_proc_dns = $dbh->prepare('INSERT INTO dns_log_stats 
+										( dns_file, dns_processed_time) VALUES ( ? , ? )');
+
+
+
+##############################
+### Subs
+##############################
+
+
+sub intro_clear_screen {
+       print "\n" x 200;
+       print '
+__________                     .__        .__  __
+\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+ |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+ |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+ |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+                              \/        \/          \/
+
+Proximity - Sinkhole Automation and Filtering System
+
+';
+        print "\n" x 20;
+}
+
+sub usage{
+        print "Proximity - proximity-reporter 0.7.5 \n";
+        print "usage: ./$0
+        		-import-pcap     (-ip )     <PATH>     - process pcap files from specific path
+        		-import-dns      (-id )     <PATH>     - process dns logs from specific path
+        		-help            (-?  )     You are here
+";
+        exit;
+}
+
+
+### Load PCAP Files from a directory
+sub load_pcap_files{
+        my $count = 0;
+        if (defined( $user_pcap_path )) {
+	        $pcap_path = $user_pcap_path;
+	        $process = "false";
+	    }
+	    
+        foreach(<$pcap_path/*>){
+
+                $raw_pcap_files{$_}++;
+                $count++;
+        }
+        #print " [+] Loaded $count PCAP Files\n";
+        return 0;
+        
+}
+### Load DNS Files from a directory
+sub load_dns_files{
+        my $count = 0;
+        if (defined( $user_dns_path )) {
+	        $dns_path = $user_dns_path;
+	        $process = "false";
+	    }
+	    
+        foreach(<$dns_path/*>){
+                $raw_dns_logs{$_}++;
+                $count++;
+        }
+        #print " [+] Loaded $count DNS Logs\n";
+        return 0;
+        
+}
+### Load Checks to see if PCAP file has been processed.  If so, return 1 and stop processing
+sub dns_log_files_handler{
+	my $dns_log = shift;
+	my $dns_log_ref = pull_dns_log_list(); # Pulls list of all PCAP Files
+	if (grep {$dns_log eq $_ } @{$dns_log_ref}) {
+		return 1;
+	}
+	else{
+		return 0;
+	}
+		
+#	exit;
+}
+sub update_filters_handler{
+	my $pcap = shift;
+	my $pcap_list_ref = pull_pcap_list(); # Pulls list of all PCAP Files
+	if (grep {$pcap eq $_ } @{$pcap_list_ref}) {
+		return 1;
+	}
+	else{
+		update_filters();
+		return 0;
+	}
+		
+#	exit;
+}
+#### Pull list of Pcaps processed
+sub pull_pcap_list{
+	my @daily_pcaps = ();
+	my $pcap_file = "";
+	my $sql = 'SELECT pcap_file from pcap_stats ';
+    my $request_handle = $dbh->prepare($sql);
+    $request_handle->execute();
+    $request_handle->bind_columns(undef, \$pcap_file );
+    while($request_handle->fetch()){
+    	push(@daily_pcaps,$pcap_file);
+    }
+    return \@daily_pcaps;
+}
+sub pull_dns_log_list{
+	my @daily_logs = ();
+	my $log_file = "";
+	my $sql = 'SELECT dns_file from dns_log_stats ';
+    my $request_handle = $dbh->prepare($sql);
+    $request_handle->execute();
+    $request_handle->bind_columns(undef, \$log_file );
+    while($request_handle->fetch()){
+    	push(@daily_logs,$log_file);
+    }
+    return \@daily_logs;
+}
+
+#Resets the filters that are currently in %pcap_filters
+sub update_filters{
+	my ($filter_id, $filter_protocol, $filter_port, $filter_pcre);
+	
+	%tcp_pcap_filters = ();
+	%udp_pcap_filters = ();
+	
+	my $request_handle = $dbh->prepare('SELECT filter_id, filter_protocol,  filter_port, filter_pcre from filters where filter_status = "active"');
+	$request_handle->execute();
+	$request_handle->bind_columns(undef, \$filter_id, \$filter_protocol, \$filter_port, \$filter_pcre );
+	while($request_handle->fetch()){
+		if ($filter_protocol eq "tcp"){
+			$tcp_pcap_filters{$filter_port}{$filter_pcre} = $filter_id;
+		}
+		elsif ($filter_protocol eq "udp"){
+			$udp_pcap_filters{$filter_port}{$filter_pcre} = $filter_id;
+		}
+		else{
+			# /This shouldn't happen
+		}
+	}
+}
+
+sub process_filters_tcp{
+        my $packet = shift;
+        my $data = shift;
+        my $pcap_path = shift;
+        my $timestamp = shift;
+
+        if (my ($matched) = grep {$data->{data} =~ /($_)/is } keys %{$tcp_pcap_filters{"0"}} ) {
+				add_filter_match($packet->{src_ip}, $data->{dest_port}, $tcp_pcap_filters{"0"}{$matched}, $pcap_path,$timestamp);
+		}
+
+		if (my ($matched) = grep {$data->{data} =~ /($_)/is } keys %{$tcp_pcap_filters{$data->{dest_port}}} ) {
+				add_filter_match($packet->{src_ip}, $data->{dest_port},  $tcp_pcap_filters{$data->{dest_port}}{$matched}, $pcap_path, $timestamp);
+		}
+		if ($data->{data} =~ /Host:[\.]*\s*([A-Za-z0-9\-\_\.]*\.[A-Za-z\.\-\_0-9]*)*\s*[\.]*/i){
+			return 0 if (!defined($1));
+			my $host = $1;
+			if ($host =~ /[A-Za-z0-9]/){
+				add_seen_host($host, $packet->{src_ip}, $data->{dest_port}, $pcap_path, $timestamp);
+			}
+		}
+		return 0;
+}
+sub process_filters_udp{
+        my $packet = shift;
+        my $data = shift;
+        my $pcap_path = shift;
+        my $timestamp = shift;
+        if (my ($matched) = grep {$data->{data} =~ /($_)/is } keys %{$udp_pcap_filters{"0"}} ) {
+				add_filter_match($packet->{src_ip}, $data->{dest_port}, $udp_pcap_filters{"0"}{$matched}, $pcap_path, $timestamp);
+		}
+
+		if (my ($matched) = grep {$data->{data} =~ /($_)/is } keys %{$udp_pcap_filters{$data->{dest_port}}} ) {
+				add_filter_match($packet->{src_ip}, $data->{dest_port},  $udp_pcap_filters{$data->{dest_port}}{$matched}, $pcap_path, $timestamp);
+		}
+		if ($data->{data} =~ /Host:[\.]*\s*([A-Za-z0-9\-\_\.]*\.[A-Za-z\.\-\_0-9]*)*\s*[\.]*/i){
+			return 0 if (!defined($1));
+			my $host = $1;
+			if ($host =~ /[A-Za-z0-9]/){
+				add_seen_host($host, $packet->{src_ip}, $data->{dest_port}, $pcap_path, $timestamp);
+			}
+		}
+		return 0;
+}
+
+sub pcap_handler{
+    my @src_vict = ();
+    my @src_scnr = ();
+    my %act_ports = ();
+    my %packet_data = ();
+    my %pcapHeader = ();
+    
+    
+
+    my $pcap_path = shift;
+
+    my $cont = update_filters_handler($pcap_path);
+    if ($cont == 1){ 
+    #	print " [X] Stop!! $pcap_path \n";
+    	return; 
+    }
+	mark_pcap_processed($pcap_path);
+
+    print " [+] Starting on PCAP - $pcap_path\n";
+    eval{
+		my $pcap_handler = Net::Pcap::pcap_open_offline("$pcap_path", \$err) or die "Can't read pcap file!: $err\n";	
+	    while (my $pkt = Net::Pcap::next($pcap_handler, \%pcapHeader)){
+	    	my $timestamp = $pcapHeader{tv_sec};
+	    	
+	            my $eth=NetPacket::Ethernet->decode($pkt);
+	            if($eth->{type} == 2048){
+	                    my $ip=NetPacket::IP->decode($eth->{data});
+	                    if ($ip->{src_ip} eq $sinkhole_IP_address){ next; }
+	                    if( $ip->{proto} == 6 ){
+	                        my $tcp=NetPacket::TCP->decode($ip->{data});
+	                        $packet_data{$ip->{src_ip}}{"tcp"}{$tcp->{dest_port}}{$timestamp}++;
+	                        process_filters_tcp($ip,$tcp,$pcap_path, $timestamp);
+	                    }elsif ( $ip->{proto} == 17 ){
+	                         my $udp = NetPacket::UDP->decode($ip->{data});
+	                        $packet_data{$ip->{src_ip}}{"udp"}{$udp->{dest_port}}{$timestamp}++;
+	                        process_filters_tcp($ip,$udp,$pcap_path, $timestamp);
+	                        
+	                    }
+	                    
+	            }
+
+	    }
+	    
+	    foreach my $source_IP (keys %packet_data){
+	        foreach my $dest_port (keys $packet_data{$source_IP}){
+	        	foreach my $conn_protocol (keys $packet_data{$source_IP}{$dest_port}){
+		        	foreach my $pcap_time (keys ${$packet_data{$source_IP}{$dest_port}}{$conn_protocol} ){
+			        	add_connection($pcap_path, $source_IP,$dest_port,$conn_protocol, $pcap_time, ${${$packet_data{$source_IP}{$dest_port}}{$conn_protocol}}{$pcap_time});
+		        	}		        	
+		        }
+	        }
+	    }
+
+	    print " [+] Finished $pcap_path\n";
+	    update_asn_details($pcap_path);
+	    Net::Pcap::close($pcap_handler);
+    };
+    if ($@) {
+    	print " [X] Problem Processing $pcap_path \n";
+		return 1;
+	}
+}
+
+sub dns_handler{
+	my $dns_log_file = shift;
+	my %month_lookup = ( Jan => 0, Feb => 1, Mar => 2, Apr => 3, May => 4, Jun => 5, Jul => 6, Aug => 7, Sep => 8, Oct => 9, Nov => 10, Dec => 11 );
+
+    my $cont = dns_log_files_handler($dns_log_file);
+    if ($cont == 1){ 
+    #	print " [X] Stop!! $dns_log_file \n";
+    	return; 
+    }
+    print " [+] Starting on DNS Log - $dns_log_file\n";
+	mark_dns_log_processed($dns_log_file);
+
+
+	open (FILE, "<:gzip", "$dns_log_file");
+	
+	while (<FILE>){
+		eval{	
+			my $raw_dns_request = $_;
+			$raw_dns_request =~ s/(\r|\n)*//sg;
+			my @tmp_dns_request = 
+				$raw_dns_request 
+					=~ m/([0-9\-]*\-[A-Za-z\-]*\-[0-9\-]*\s[0-9\-]*\:[0-9\-]*\:[0-9\-]*\.[0-9\-]*)\squeries:\sinfo:\sclient\s([0-9\-\.]*\x23[0-9]*):\squery:\s([A-Za-z0-9\.\-\_*]*)\sIN([A-Za-z]*)\s.*\(([0-9\-\.]*)\)/;
+					
+			unless ( 
+				(defined($tmp_dns_request[0])) 
+					&& (defined($tmp_dns_request[1]))
+					&& (defined($tmp_dns_request[2]))
+					&& (defined($tmp_dns_request[3]))
+					&& (defined($tmp_dns_request[4]))
+				){
+					#print "Bad line in DNS Logs\n";
+					#print "$_\n";
+					next;
+				}
+			my @norm_timestamp = $tmp_dns_request[0] =~ m/([0-9\-]*)\-([A-Za-z\-]*)\-([0-9\-]*)\s([0-9\-]*)\:([0-9\-]*)\:([0-9\-]*)\.([0-9\-]*)/;
+			my $time_stamp = timelocal( $norm_timestamp[5],$norm_timestamp[4], $norm_timestamp[3], $norm_timestamp[0], $month_lookup{$norm_timestamp[1]}, $norm_timestamp[2] );
+			
+		#	print "Source_IP = " .$tmp_dns_request[1] . " | Query = "     .$tmp_dns_request[2] . " | Timestamp $time_stamp\n";
+			
+			add_dns_request($tmp_dns_request[1], $tmp_dns_request[2], $tmp_dns_request[3], $tmp_dns_request[4], $time_stamp );
+			
+			
+
+		};
+		if (@$) {
+			print "ERROR with \n$_\n";
+		}
+	}
+	print " [+] Finished $dns_log_file\n";
+	
+	close FILE;
+	
+}
+
+
+sub add_filter_match {
+	my $source_ip = shift;
+	my $infected_ip_port = shift; 
+	my $filter_id = shift;
+	my $pcap_file = shift;
+	my $timestamp = shift;
+	eval{
+		$sth_infected->execute($source_ip, $infected_ip_port, $filter_id, $timestamp, $pcap_file,);
+		$sth_infected->finish;
+	};
+	if ($@) {
+		return 1;
+	}
+		return 0;
+}
+
+sub add_connection {
+	my $pcap_file = shift;
+	my $source_ip = shift;
+	my $destination_port = shift;
+	my $protocol = shift;
+	my $timestamp = shift;
+	my $occurances = shift;
+
+	eval{
+		$sth_connection->execute($source_ip, $destination_port, $protocol,  $pcap_file,$timestamp, $occurances,$occurances);
+		$sth_connection->finish;
+	};
+	if ($@) {
+		print " [X] Failed to Add Connection entry\n";
+		return 1;
+	}
+	return 0;
+}
+
+sub add_dns_request {
+	my $source_ip = shift;
+	my $query = shift;
+	my $record_type = shift;
+	my $returned = shift;
+	my $timestamp = shift;
+
+	eval{
+		$sth_dns_request->execute($source_ip, $query, $record_type, $returned, $timestamp, 1);
+		$sth_dns_request->finish;
+	};
+	if ($@) {
+		print " [X] Failed to Add Connection entry\n";
+		return 1;
+	}
+	return 0;
+}
+
+sub mark_pcap_processed {
+	my $pcap_file = shift;
+	my $timestamp = time;	
+	if (defined($user_pcap_path)){ print "Not adding timestamp\n"; $timestamp = 0;}
+	
+	eval{
+		$sth_proc_pcap->execute($pcap_file,$timestamp);
+		$sth_proc_pcap->finish;
+	};
+	if ($@) {
+		print " [X] Failed to Add PCAP Processed entry\n";
+		return 1;
+	}
+	return 0;
+}
+
+sub mark_dns_log_processed {
+	my $dns_log_file = shift;
+	my $timestamp = time;
+	if (defined($user_dns_path)){ print "Not adding timestamp\n"; $timestamp = 0;}
+	
+	eval{
+		$sth_proc_dns->execute($dns_log_file,$timestamp);
+		$sth_proc_dns->finish;
+	};
+	if ($@) {
+		print " [X] Failed to Add PCAP Processed entry\n";
+		return 1;
+	}
+	return 0;
+}
+
+
+sub update_asn_details{
+	my $pcap_file = shift;
+	my ($ip_address);
+	my $bulk_query = "begin\n";
+	my $request_handle = $dbh->prepare('SELECT DISTINCT source_ip from connection_log where (asn is null and asn_name is null and pcap_file = ?)');
+	$request_handle->execute($pcap_file);
+	$request_handle->bind_columns(undef, \$ip_address);
+	
+	while($request_handle->fetch()){
+		$bulk_query .= "$ip_address\n";
+	}
+	$bulk_query .= "end\n";
+	
+	my $socket;
+	$socket = new IO::Socket::INET (
+		PeerAddr   => 'whois.cymru.com:43',
+		Proto      => 'tcp'
+		) or die "ERROR in Socket Creation : $!\n";
+	$socket->send($bulk_query);	
+		
+	my $query_result = "";
+	while (<$socket>){
+		$query_result .= $_;
+	}
+	print " [+] Data received from socket\n";
+	$socket->close();
+	add_asn_details($query_result, $pcap_file);
+	return 0;
+}
+
+
+sub pull_ips_needing_asn{
+
+}
+
+sub add_asn_details{
+	my @query_results = split(/\n/, shift );
+	my $pcap_file = shift;
+	foreach (@query_results){
+		my @asn_record = split(/\s*\|\s*/, $_ );
+		my ($asn, $asn_name, $source_ip) = (" ", " ", " ");
+		$asn = $asn_record[0] if (defined($asn_record[0])); 
+		$asn_name = $asn_record[2] if (defined($asn_record[2]));
+		$source_ip = $asn_record[1] if (defined($asn_record[1]));
+		
+		eval{
+			my $sth = $dbh->prepare('UPDATE connection_log set asn = ? , asn_name = ? WHERE (source_ip = ? and pcap_file = ?)');
+			$sth->execute($asn, $asn_name, $source_ip, $pcap_file);
+			$sth->finish;
+		};
+		if ($@) {
+			print " [X] Error Updating ASN details\n";
+			return 1;
+		}
+
+	}
+	print " [+] ASN Details Updated successfully\n";
+	return 0;
+}
+
+sub add_seen_host {
+	my $host = shift;
+	my $source_ip = shift;
+	my $destination_port = shift;
+	my $pcap_file = shift;
+	my $timestamp = shift;
+
+	eval{
+		$sth_http_hosts->execute($host, $source_ip, $destination_port, $pcap_file, $timestamp );
+		$sth_http_hosts->finish;
+	};
+	if ($@) {
+		print " [X] Failed to Insert Host Entry (Details: $host, $source_ip, $pcap_file\n";
+		return 1;
+	}
+	return 0;
+}
+
+
+
+##############################
+### Main
+##############################
+if (defined($daemon)){
+	Proc::Daemon::Init;
+}
+
+$SIG{TERM} = sub { $process = "false" };
+
+intro_clear_screen();
+
+
+while ($process eq "true"){
+
+    if ( ($pcap_proc_enabled eq "true" ) && (!defined($user_pcap_path)) && (!defined($user_dns_path)) ){
+    	load_pcap_files();
+	    foreach my $file (keys %raw_pcap_files){
+	        pcap_handler($file);
+	    }
+    }
+    
+    if ( ( $dns_proc_enabled eq "true" ) && (!defined($user_pcap_path)) && (!defined($user_dns_path)) ){
+	    load_dns_files();
+	    foreach my $file (keys %raw_dns_logs ){
+		    dns_handler($file);
+	    }
+    }
+    sleep 60; 
+}
+
+
+
+
+
+
+
+
+
+
+
+
+###// Fin
+

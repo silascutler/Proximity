@@ -1,0 +1,265 @@
+#!/usr/bin/perl
+#############################################################################################
+#
+#__________                     .__        .__  __
+#\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+# |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+# |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+# |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+#                              \/        \/          \/
+#
+# proximity_reporter
+#
+# Copyright (C) 2012, Silas Cutler
+#      <Silas.Cutler@BlackListThisDomain.com / SCutler@SecureWorks.com>
+#
+# This program is free software; you can redistribute it and/or modify it without restriction.
+#      Any implimentation or profitting from this code requires the consent of the original 
+#      author.  Any updates or impovements are not required to be shared with the author, but 
+#      encoraged.  
+#
+# This software is provided as is.  The author or any associated parties are not liable for 
+#      any use of this software or any damage that may occur from this software.
+#
+#############################################################################################
+#	v0.7.5
+#############################################################################################
+
+use strict;
+use warnings;
+use DBI;
+use Authen::SASL;
+use MIME::Lite;
+use Getopt::Long;
+use Net::Pcap;
+use NetPacket::Ethernet;
+use NetPacket::IP;
+use NetPacket::TCP;
+use NetPacket::UDP;
+use Config::Simple; 
+
+
+
+
+my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
+
+# Parse in the Database Details
+my $database_host = $config->param("Database.database_host");
+my $database_name = $config->param("Database.database_name");
+my $database_user = $config->param("Database.database_user");
+my $database_password = $config->param("Database.database_password");
+
+
+my $sinkhole_IP_address = $config->param("SinkholeDetails.sinkhole_IP_address");
+
+
+# Parse in the mail data
+my $sender_address = $config->param("Mail.From_Address");
+my $sender_address_password = $config->param("Mail.From_Address_Password");
+
+my $mail_server = $config->param("Mail.Mail_Server");
+my $mail_server_port = $config->param("Mail.Mail_Server_Port");
+
+
+my $recipient = 'Threat.Monitor@sh3llbox.com';
+
+my $current_Time = time;
+my $report = "";
+my $err = "";
+my $debug = 0;
+
+my $date = `date +%Y-%m-%d`;
+chomp($date);
+
+my $dbh = DBI->connect('dbi:mysql:'. $database_name,$database_user,$database_password) or die "Connection Error: $DBI::errstr\n";
+
+
+#############################################################################################
+#### Main
+#############################################################################################
+pull_recent_pcaps();
+print "Processing Packets\n";
+my $unmatched_ip_ref = search_unmatched ();
+	print "Total Unmatched --> " . keys (%{$unmatched_ip_ref}) . "\n";
+	$report .= "Total Unmatched --> " . keys (%{$unmatched_ip_ref}) . "\n";
+	foreach my $unmatched_ip (keys %{$unmatched_ip_ref} ){
+		#print "Unmatched - > $unmatched_ip (". ${$unmatched_ip_ref}{$unmatched_ip}.  ")\n";
+		eval{
+			my ( $packet) = pull_packet_raw($unmatched_ip);
+			$report .= "Unmatched - > $unmatched_ip  (". ${$unmatched_ip_ref}{$unmatched_ip}.  ")";
+			#$packet =~ s/\n\n/\n/g;
+			$report .= $packet;
+			
+			$report .=  '-'x25 . "\n"; 
+		};
+		if ($@){
+			$report .= "Problem with pulling packet for $unmatched_ip\n";
+			$report .= '-'x40 . "\n"; 
+		}
+	}
+
+print "Finished Processing Packets\n";
+email_report($recipient, $report);
+
+
+
+
+#############################################################################################
+#### Subs
+#############################################################################################
+
+
+
+sub pull_packet_raw{
+	my $source_ip = shift;
+	my $pcap_file_ref = pcap_search($source_ip);
+	my %pcapHeader = ();
+	my $output = "";
+	my $payload = "";
+	foreach my $pcap_file (@{$pcap_file_ref}){	
+		unless ( -f $pcap_file) {
+			$payload .= "Missing PCAP File - $pcap_file\n";
+			next;
+		}
+	
+            open( PROCESS , "ngrep -I $pcap_file host $source_ip -W single -q -n 1 |" ) or die "Failed to open tcpflow: $!";
+                    while( <PROCESS> ) {
+                            $output .= "$_\n";
+                    #       print "$_\n";
+                    }
+            close PROCESS; 
+
+		
+		
+		$output =~ s/^$//g;
+		if ($output =~ /[A-Za-z0-9]/ ){
+			return $output;
+		}
+	}
+	
+	print "Fail closed\n";
+	return $output;
+}
+
+
+sub pull_recent_pcaps{
+	my @daily_pcaps = ();
+	my $pcap_file = "";
+	my $sql = 'SELECT pcap_file from pcap_stats ';
+	$sql .= 'where (pcap_processed_time > unix_timestamp(now()) - 86400) limit 3';
+    my $request_handle = $dbh->prepare($sql);
+    $request_handle->execute();
+    $request_handle->bind_columns(undef, \$pcap_file );
+    while($request_handle->fetch()){
+    	push(@daily_pcaps,$pcap_file);
+    }
+    return \@daily_pcaps;
+}
+
+sub search_unmatched{	
+	my ($unmatched_ip ) = "";
+
+	my %connections = ();
+	my $pcap_ref = pull_recent_pcaps();
+	
+	my $sql = 'SELECT connection_log.source_ip
+					FROM connection_log 
+					LEFT JOIN filter_matches 
+					ON connection_log.source_ip = filter_matches.source_ip 
+					WHERE (filter_matches.source_ip IS null &&';
+		$sql .= '( connection_log.pcap_file = "' . join('" || connection_log.pcap_file="' , @{$pcap_ref}) . '"))';
+		$sql .= 'GROUP BY source_ip';
+
+    my $request_handle = $dbh->prepare($sql);
+    	
+    $request_handle->execute();
+    $request_handle->bind_columns(undef, \$unmatched_ip);
+    while($request_handle->fetch()){
+    	
+    	my (%ports , %pcap, $port, $pcap_file, $count) = ();
+    	my $t_count = 0;
+		my $details_request_handle = $dbh->prepare("SELECT destination_port, pcap_file, count from connection_log where source_ip = ? ");
+			
+		$details_request_handle->execute($unmatched_ip);
+		$details_request_handle->bind_columns(undef, \$port, \$pcap_file, \$count);
+		while($details_request_handle->fetch()){    	
+    		$ports{$port}++;
+    		$pcap{$pcap_file}++;
+    		$t_count += $count;
+    	}
+    	
+		my $asn_name = asn_lookup($unmatched_ip);
+#		print "$unmatched_ip " . keys(%ports) . " $t_count ". keys(%pcap) . "\n";
+		$connections{$unmatched_ip}=$asn_name if ( (  keys (%ports) <= 2 ) && ( $t_count > 5 ) && ( keys (%pcap) > 1 ) );
+    	
+    }
+    return \%connections;    
+
+}
+
+
+
+sub asn_lookup{	
+	my $ip_address = shift;
+	my $asn_name = "";
+
+	my $sql = 'select asn_name from connection_log where (source_ip = ? and asn_name is not null) limit 1';
+    my $request_handle = $dbh->prepare($sql);
+    	
+    $request_handle->execute($ip_address);
+    $request_handle->bind_columns(undef, \$asn_name );
+    $request_handle->fetch();
+
+    if (!defined($asn_name)){
+	    	return "NULL:";
+    }
+    return $asn_name;
+}
+
+
+sub pcap_search{
+	my $ip_address = shift;
+	my $pcap_file = "";
+	my @pcap_file_all = ();
+
+	my $sql = 'select pcap_file from connection_log where ( source_ip = ? )';
+
+    my $request_handle = $dbh->prepare($sql);
+    	
+    $request_handle->execute($ip_address);
+    $request_handle->bind_columns(undef, \$pcap_file );
+    while($request_handle->fetch()){
+    	push(@pcap_file_all, $pcap_file);
+    }
+    return \@pcap_file_all;    	
+	
+	
+}
+
+
+sub email_report{
+    my @to = (shift);
+	my $message_body = shift;
+    my $subject= "Proximity Anomaly Report [ $date ] DEV";
+    my $message = qq{
+Proximity Anomaly Report for $date  
+$message_body
+
+	};
+	
+	
+	MIME::Lite->send('smtp',$mail_server . ':' . $mail_server_port ,AuthUser=>$sender_address, AuthPass=>$sender_address_password);
+		foreach my $recipient(@to){
+			my $msg = MIME::Lite->new(
+	    	    From     => $sender_address,
+	    	    To       => $recipient,
+	    	    Subject  => $subject,
+	    	    Data     => $message,
+	    	    Type	 => 'Text/text',
+	    	);
+	
+	
+	    $msg->send or die "Message Send Faied";
+	    print "Email Sent - $subject /$recipient !\n";
+	}
+}

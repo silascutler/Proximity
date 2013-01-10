@@ -1,0 +1,207 @@
+#!/usr/bin/perl
+#############################################################################################
+#
+#__________                     .__        .__  __
+#\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+# |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+# |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+# |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+#                              \/        \/          \/
+#
+# proximity_controller
+#
+# Copyright (C) 2012, Silas Cutler
+#      <Silas.Cutler@BlackListThisDomain.com / SCutler@SecureWorks.com>
+#
+# This program is free software; you can redistribute it and/or modify it without restriction.
+#      Any implimentation or profitting from this code requires the consent of the original 
+#      author.  Any updates or impovements are not required to be shared with the author, but 
+#      encoraged.  
+#
+# This software is provided as is.  The author or any associated parties are not liable for 
+#      any use of this software or any damage that may occur from this software.
+#
+#############################################################################################
+#	v0.7.5
+#############################################################################################
+
+
+use strict;
+use warnings;
+use DBI;
+use Getopt::Long;
+use Config::Simple;
+
+
+
+my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
+
+my $database_host = $config->param("Database.database_host");
+my $database_name = $config->param("Database.database_name");
+my $database_user = $config->param("Database.database_user");
+my $database_password = $config->param("Database.database_password");
+
+my $sinkhole_IP_address = $config->param("SinkholeDetails.sinkhole_IP_address");
+
+
+my $dbh = DBI->connect('dbi:mysql:'. $database_name,$database_user,$database_password) or die "Connection Error: $DBI::errstr\n";
+
+#Input Handling.
+my ($add_filter,$dis_filter, $list_filter,$enable_filter, $list_filter_dis,$help);
+usage() if ( ( @ARGV < 1 or ! GetOptions(
+    'help|?'                                   =>      \$help,
+    'add-filter|af'                            =>      \$add_filter,
+    'dis-filter|df'                            =>      \$dis_filter,
+    'enable-filter|ef'                         =>      \$enable_filter,
+    'list-filters|lf'                          =>      \$list_filter,
+    'list-filters-disabled|ld'                =>      \$list_filter_dis,
+        )or defined $help  )  );
+
+if ( defined($add_filter))             { add_filter ();         			     }
+if ( defined($dis_filter))             { disable_filter ();                }
+if ( defined($list_filter))            { list_filters_active ();                        }
+if ( defined($list_filter_dis))        { list_filters_disabled ();              }
+if ( defined($enable_filter))		   { enable_filter();                        }
+
+sub usage{
+        print "Proximity - proximity-controller 1.0 \n - Silas Cutler 2012\n\n";
+        print "usage: ./$0
+
+        -add-filter      ( -af )             - Add Filter
+        -disable-filter  ( -df )		     - disable filter
+        -enable-filter   ( -ef )             - enable filter
+        --------------
+        -list-filters (-lf )                  - List all active Filters
+        --------------
+        -list-filters-disabled (-ld )        - List all Disabled Domains
+   \n";
+        exit;
+}
+
+
+sub add_filter{
+
+	
+	print "Enter Port this activity on:\n";
+	my $filter_port = <>;
+	chomp($filter_port);
+	if ($filter_port !~ /^[0-9]*$/ ){
+		$filter_port= 0;
+	}
+	
+	print "Enter Protocol for this activity (tcp / udp) :\n";
+	my $filter_protocol = <>;
+	chomp($filter_protocol);
+	$filter_protocol = lc($filter_protocol);
+
+	if ( ( $filter_protocol ne "tcp") && ($filter_protocol ne "udp") ){
+		print "Must be either UDP or TCP\n";
+		exit;
+	}
+	
+	print "Enter PCRE Filter Below:\n";
+	my $filter_pcre = <>;
+	chomp($filter_pcre);
+	
+	print "Your PCRE is: \"$filter_pcre\"\n";
+	my $filter_pcre_test = eval { qr/$filter_pcre/ };
+	if ($@){
+		print "Invalid Regex\n";
+		exit;
+	}
+
+	print "Enter any notes:\n";
+	my $filter_notes = <>;
+	chomp($filter_notes);
+
+
+		#Submit Query
+		my $sth = $dbh->prepare("INSERT INTO filters (filter_port, filter_protocol, filter_pcre, filter_note, filter_status, added) VALUES  ( ?, ?, ?, ?, 'active', ?)");
+		$sth->execute( $filter_port, $filter_protocol, $filter_pcre, $filter_notes, time );
+		print "Filter Added - Port: $filter_port/$filter_protocol - /$filter_pcre/ \n";
+
+
+
+}
+
+sub list_filters_active{
+        my ($filter_note, $filter_port, $filter_pcre, $filter_id);
+        my $count = 0;
+
+        my $request_handle = $dbh->prepare('SELECT filter_id, filter_port, filter_pcre, filter_note from filters where filter_status = "active" order by filter_id');
+        $request_handle->execute();
+        $request_handle->bind_columns(undef, \$filter_id, \$filter_port, \$filter_pcre ,\$filter_note);
+        while($request_handle->fetch()){
+            $count++;
+            print "\n [$filter_id] - Port: $filter_port\n - PCRE: /$filter_pcre/\n - Note: - $filter_note\n";
+        }
+        print "\n Total = $count\n";
+}
+
+sub list_filters_disabled{
+        my ($filter_note, $filter_port, $filter_pcre, $filter_id);
+        my $count = 0;
+
+        my $request_handle = $dbh->prepare('SELECT filter_id, filter_port, filter_pcre, filter_note from filters where filter_status = "disable" order by filter_id');
+        $request_handle->execute();
+        $request_handle->bind_columns(undef, \$filter_id, \$filter_port, \$filter_pcre ,\$filter_note);
+        while($request_handle->fetch()){
+            $count++;
+            print "\n [$filter_id] - Port: $filter_port\n - PCRE: /$filter_pcre/\n - Note: - $filter_note\n";
+        }
+        print "\n Total = $count\n";
+}
+
+sub disable_filter{
+
+        my ($filter_note, $filter_port, $filter_pcre, $filter_id);
+        my $count = 0;
+
+        my $request_handle = $dbh->prepare('SELECT filter_id, filter_port, filter_pcre, filter_note from filters where filter_status = "active" order by filter_id');
+        $request_handle->execute();
+        $request_handle->bind_columns(undef, \$filter_id, \$filter_port, \$filter_pcre ,\$filter_note);
+        while($request_handle->fetch()){
+            $count++;
+            print "\n [$filter_id] - Port: $filter_port\n - PCRE: /$filter_pcre/\n - Note: - $filter_note\n";
+        }
+
+		print "Enter  Filter ID Number:\n";
+		my $filter_number = <>;
+		chomp($filter_number);
+		if ($filter_number !~ /^[0-9]*$/){
+			print "Enter Filter Number only!\n";
+			exit;
+		}
+		my $sth = $dbh->prepare("UPDATE filters set filter_status = 'disable' WHERE ( filter_id = ?  )");
+		$sth->execute($filter_number);
+		print "Disabled Filter - $filter_number\n";
+		
+}
+
+sub enable_filter{
+
+        my ($filter_note, $filter_port, $filter_pcre, $filter_id);
+        my $count = 0;
+
+        my $request_handle = $dbh->prepare('SELECT filter_id, filter_port, filter_pcre, filter_note from filters where filter_status = "disable" order by filter_id');
+        $request_handle->execute();
+        $request_handle->bind_columns(undef, \$filter_id, \$filter_port, \$filter_pcre ,\$filter_note);
+        while($request_handle->fetch()){
+            $count++;
+            print "\n [$filter_id] - Port: $filter_port\n - PCRE: /$filter_pcre/\n - Note: - $filter_note\n";
+        }
+
+		print "Enter  Filter ID Number:\n";
+		my $filter_number = <>;
+		chomp($filter_number);
+		if ($filter_number !~ /^[0-9]*$/){
+			print "Enter Filter Number only!\n";
+			exit;
+		}
+		my $sth = $dbh->prepare("UPDATE filters set filter_status = 'enable' WHERE ( filter_id = ?  )");
+		$sth->execute($filter_number);
+		print "Enabled Filter - $filter_number\n";
+		
+}
+
+

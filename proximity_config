@@ -1,0 +1,52 @@
+#############################################################################################
+#
+#__________                     .__        .__  __
+#\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+# |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+# |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+# |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+#                              \/        \/          \/
+#
+# proximity_config
+#
+# Copyright (C) 2012, Silas Cutler
+#      <Silas.Cutler@BlackListThisDomain.com / SCutler@SecureWorks.com>
+#
+# This program is free software; you can redistribute it and/or modify it without restriction.
+#      Any implimentation or profitting from this code requires the consent of the original 
+#      author.  Any updates or impovements are not required to be shared with the author, but 
+#      encoraged.  
+#
+# This software is provided as is.  The author or any associated parties are not liable for 
+#      any use of this software or any damage that may occur from this software.
+#
+#
+#############################################################################################
+#	v0.7.5
+#############################################################################################
+
+[Processing]
+pcap_proc_enabled = "false"
+pcap_path = "<SINKHOLE PCAP PATH>"
+
+dns_proc_enabled = "false"
+dns_path = "<SINKHOLE DNS PATH>"
+
+
+[Database]
+database_host = "<DATABASE HOST>"
+database_name = "<DATABASE NAME>"
+database_user = "<DATABASE USER>"
+database_password = "<DATABASE PASSWORD>"
+
+
+[SinkholeDetails]
+#This should be IP address will know itself by (=> the IP the sinkhole will be in PCAPs)
+sinkhole_IP_address = "<SINKHOLE IP>";
+
+
+[Mail]
+From_Address = "<FROM ADDRESS>"
+From_Address_Password = "<PASSWORD>"
+Mail_Server = "<MAIL SERVER>"
+Mail_Server_Port = "<MAIL PORT"
