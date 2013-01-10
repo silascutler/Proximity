@@ -17,9 +17,9 @@ Software
 
 
 
-proximity_anomaly - Generates Anomaly Report Email
-proximity_config
-proximity_controller
-proximity_initdb
-proximity_reporter
-proximity_server
+proximity_anomaly - Generates Anomaly Report Email <br />
+proximity_config - Configuration File for Proximity<br />
+proximity_controller - Tool for Adding / Removing / Listing Filters<br />
+proximity_initdb - Creates Database scheme <br />
+proximity_reporter - Generates reports / Pull data / Search<br />
+proximity_server - Core <br />
