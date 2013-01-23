@@ -22,7 +22,7 @@
 #      any use of this software or any damage that may occur from this software.
 #
 #############################################################################################
-#	v0.7.5
+#	v0.8
 #############################################################################################
 
 use strict;
@@ -70,6 +70,7 @@ my ($help,
 	$search_recent, 
 	$search_connection_asn_number, 
 	$search_connection_asn_name,
+	$pcap_limiter,
 	$search_pcap, 
 	$count_only,
 	$list_scanner, 
@@ -108,6 +109,7 @@ usage() if ( ( @ARGV < 1 or ! GetOptions(
     'print-asn|pa' 								=>		\$print_asn,
     'efrom|from=s'								=>		\$email_from,
     'filter-status|fs'							=>		\$filter_status,
+    'pcap_limit|pl=s'                           =>      \$pcap_limiter,
 
         )or defined $help  )  );
 
@@ -158,7 +160,7 @@ if ( defined($email))
 ################			Subs								####################
 ####################################################################################
 sub usage{
-        print "Proximity - proximity-reporter 0.7.5 \n - Silas Cutler 2012\n\n";
+        print "Proximity - proximity-reporter 1.0 \n - Silas Cutler 2012\n\n";
         print "usage: ./$0
         
 ------------ Infection Search ------------------------
@@ -170,46 +172,48 @@ sub usage{
 -count                        ( -c    )       - Only print counts (skip Address Listing)
 -search-recent                ( -r    )       - Only print Results from the past 24
 -print-asn                    ( -pa   )       - Print ASN Name
+-pcap-limit                   ( -pl   )
 		
 ------------ Connection Search ------------------------
- -search-conn-asn              ( -sca  )       - Search for Connections based on ASN Number
- -search-conn-asn-name         ( -scan )       - Search for Connections based on ASN Name
+-search-conn-asn              ( -sca  )       - Search for Connections based on ASN Number
+-search-conn-asn-name         ( -scan )       - Search for Connections based on ASN Name
 
- -count                        ( -c    )       - Only print counts (skip Address Listing)
- -search-recent                ( -r    )       - Only print Results from the past 24 hours
- -print-asn                    ( -pa   )       - Print ASN Name
+-count                        ( -c    )       - Only print counts (skip Address Listing)
+-search-recent                ( -r    )       - Only print Results from the past 24 hours
+-print-asn                    ( -pa   )       - Print ASN Name
 
 ------------ Hosts Search ----------------------------
- -search-hostname             ( -sh  )       - Search for IP addresses by Host Name 
- -search-hostname-all         ( -sha )       - Search for IP addresses by Host Name and Subdomains    
- -search-hostname-only        ( -sho )       - Search for hostnames by string    
+-search-hostname             ( -sh    )      - Search for IP addresses by Host Name 
+-search-hostname-all         ( -sha   )      - Search for IP addresses by Host Name and Subdomains    
+-search-hostname-only        ( -sho   )      - Search for hostnames by string    
 
- -count                        ( -c    )     - Only print counts (skip Address Listing)
- -search-recent                ( -r    )     - Only print Results from the past 24 hours
- -print-asn                    ( -pa   )     - Print ASN Name
+-count                        ( -c    )      - Only print counts (skip Address Listing)
+-search-recent                ( -r    )      - Only print Results from the past 24 hours
+-print-asn                    ( -pa   )      - Print ASN Name
+-pcap-limit                   ( -pl   )
 
 
 ------------ IP Searches -----------------------------
- -ip-pcap                      ( -pcap	)       - Search for PCAPs that contain an IP address
+-ip-pcap                      ( -pcap	)     - Search for PCAPs that contain an IP address
 
 ------------ List Information ------------------------
- -list-recent-connections
- -list-recent-infections
+-list-recent-connections
+-list-recent-infections
 
- -print-asn                    ( -pa   )       - Print ASN Name
-		
+-print-asn                    ( -pa   )       - Print ASN Name
+	
 ------------ IP Group Information -------------------
- -list-scanners                ( -ls   )       - List all IP addresses that attempted to check for 
- -list-unmatched               ( -lu   )       - List any regular connecting IP that did not match a filter or scanner conditions		
- -print-asn                    ( -pa   )       - Print ASN Name
+-list-scanners                ( -ls   )       - List all IP addresses that attempted to check for 
+-list-unmatched               ( -lu   )       - List any regular connecting IP that did not match a filter or scanner conditions		
+-print-asn                    ( -pa   )       - Print ASN Name
 
 ------------ System Information ---------------------
- -proc-stat                    ( -ps   )       - Processing Status	(All Time)
- -filter-status                ( -fs   )       - Print Filters Status			       
- -search-recent                ( -r    )       - Only print Results from the past 24 hours
+-proc-stat                    ( -ps   )       - Processing Status	(All Time)
+-filter-status                ( -fs   )       - Print Filters Status			       
+-search-recent                ( -r    )       - Only print Results from the past 24 hours
 
 
- -help                         ( -h    )       - Prints this Help Message
+-help                         ( -h    )       - Prints this Help Message
 ";
         exit;
 }
@@ -533,7 +537,7 @@ sub search_host_names_only{
 sub search_print{
 	my $search_ref = shift;
 	my $description = shift;
-	
+	my $count = 0;
 	$description .= " ( From the past 24 hours ) " if (defined($search_recent));
 	
 	print "$description: \n";
@@ -541,6 +545,10 @@ sub search_print{
 	
 	if (!defined($count_only)){	
 		foreach( keys %{$search_ref} ){
+			if (defined($pcap_limiter)){
+				my $pcap_count = pcap_search($_);
+				next if (keys (%{$pcap_count}) <= $pcap_limiter);
+			}
 			if (defined($print_asn)){
 				print " - $_  ( ${$search_ref}{$_} )\n";
 				$report .= " - $_  ( ${$search_ref}{$_} )\n" if (defined($email));
@@ -548,11 +556,12 @@ sub search_print{
 				print " - $_\n";
 				$report .= " - $_\n" if (defined($email));
 			}
+			$count++;
 		}
 	}
 	 
-	print "Total -- " . keys (%{$search_ref}) . "\n";
-	$report .= "Total -- " . keys (%{$search_ref}) . "\n" if (defined($email));
+	print "Total -- " . $count . "\n";
+	$report .= "Total -- " . $count . "\n" if (defined($email));
 }
 
 
