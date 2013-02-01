@@ -1,0 +1,168 @@
+#!/usr/bin/perl
+#############################################################################################
+#
+#__________                     .__        .__  __
+#\______   \_______  _______  __|__| _____ |__|/  |_ ___.__.
+# |     ___/\_  __ \/  _ \  \/  /  |/     \|  \   __<   |  |
+# |    |     |  | \(  <_> >    <|  |  Y Y  \  ||  |  \___  |
+# |____|     |__|   \____/__/\_ \__|__|_|  /__||__|  / ____|
+#                              \/        \/          \/
+#
+# proximity_rule_gen
+#
+# Copyright (C) 2012, Silas Cutler
+#      <Silas.Cutler@BlackListThisDomain.com / SCutler@SecureWorks.com>
+#
+# This program is free software; you can redistribute it and/or modify it under the
+#      terms of the GNU General Public License as published by the Free Software
+#      Foundation; either version 2 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY
+#      WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+#      PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+#
+#############################################################################################
+
+use strict;
+use warnings;
+use DBI;
+use Getopt::Long;
+use Config::Simple;
+
+
+
+my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
+
+my $database_host = $config->param("Database.database_host");
+my $database_name = $config->param("Database.database_name");
+my $database_user = $config->param("Database.database_user");
+my $database_password = $config->param("Database.database_password");
+
+
+my $dbh = DBI->connect('dbi:mysql:'. $database_name,$database_user,$database_password) or die "Connection Error: $DBI::errstr\n";
+my $sth = $dbh->prepare("INSERT INTO domain_filters 
+							(domain_name, domain_port, domain_pcre, domain_note, domain_filter_status) 
+							VALUES  ( '' , ? , ? , ? , 'active')"
+						);
+
+#Input Handling.
+my ($rule_path,$help,$debug);
+usage() if ( ( @ARGV < 1 or ! GetOptions(
+    'help|?'	=>      \$help,
+    'path|p=s'  =>      \$rule_path,
+    'debug|d'	=>		\$debug
+        ) or defined $help  or !defined($rule_path))  );
+
+if ( -f $rule_path ) { process_snort_rules( $rule_path ); }
+else{ usage(); }
+
+
+
+sub usage{
+        print "Proximity - Rule Generator 1.0 \n - Silas Cutler 2012\n\n";
+        print "usage: ./$0
+        -path      ( -p )   <Snort Rules Path>   - Path to Snort Rules
+
+   \n";
+        exit;
+}
+
+sub process_snort_rules{
+	my $rule_file = shift;
+
+	#Open Rule File
+	open RULE_FILE, $rule_file or die $!;
+
+	# process opened file
+	my @skipped_rules = ();
+	while (<RULE_FILE>) {
+		my $raw_rule = $_;
+		if ($raw_rule =~ /^#/ || $raw_rule !~ /msg/ ){ next; }
+		
+		#Clear any newline breaks that may have been left from File Read
+		$raw_rule =~ s/(\n|\r)//;
+		
+		#Define Key elements of Filter
+		my ($rule_msg, $rule_port, $raw_regex);
+	
+		### Strip out the MSG header
+		if ( $raw_rule =~ /msg:\"(.*?)\";/ ) {
+			$rule_msg = $1;	
+		}else{
+			# if msg file isn't valid, skip
+			push(@skipped_rules, $raw_rule);
+			next;
+		}
+	
+		
+		#Extract the Destination Port
+		if ($raw_rule =~ /\->\s[\$A-Za-z0-9\.\_]*\s([0-9]*)\s\(/ ){
+			$rule_port = $1;
+		}else{
+			$rule_port = 0;
+		}
+		print " [DEBUG] [RAW RULE] $raw_rule\n" if defined($debug);
+		print " [DEBUG] [MSG] $rule_msg \n" if defined($debug);
+		print " [DEBUG] [PORT] $rule_port \n" if defined($debug);
+	
+		#Extract any PCRE || Content Matches
+		my @rule_match_crit = $raw_rule =~ /(pcre:\".*?|content:\".*?)\";/gi;
+		
+		foreach my $rule_element ( @rule_match_crit ){
+			print " [DEBUG] [ORIGINAL] $rule_element\n" if defined($debug);
+	
+	
+			if ($rule_element =~ /^pcre/i ){
+				$rule_element =~ s/^pcre:\"//i;
+				print " [DEBUG] [PCRE] $rule_element\n" if defined($debug);
+	
+				$raw_regex .= $rule_element . ".*";
+			} elsif ($rule_element =~ /^content/i ){
+				$rule_element =~ s/^content:\"//i;
+				$rule_element =~ s/[\x00-\x1F]/\\./g;
+				$rule_element =~ s/[\x21-\x29]/\\./g;
+				$rule_element =~ s/[\x2B-\x2D]/\\./g;
+				$rule_element =~ s/[\x2F]/\\./g;
+				$rule_element =~ s/[\x3C-\x40]/\\./g;
+				$rule_element =~ s/[\x5B]/\\./g;
+				$rule_element =~ s/[\x5D-\x60]/\\./g;
+				$rule_element =~ s/[\x7B]/\\./g;
+				$rule_element =~ s/[\x7D-\xFF]/\\./g;
+				
+				my @hex_matches = $rule_element =~ /(\|[\s0-9A-Fa-f]*\|)/gi;
+				foreach my $rule_element_hex ( @hex_matches ){
+					my $rule_element_hex_orig = $rule_element_hex;
+					$rule_element_hex =~ s/^\|\s*/\\x/;
+					$rule_element_hex =~ s/\s*\|$//;
+					$rule_element_hex =~ s/\s/\\x/g;
+					$rule_element =~ s/\Q$rule_element_hex_orig\E/$rule_element_hex/;
+				}
+				print " [DEBUG] [POST] $rule_element\n" if defined($debug);
+				$raw_regex .= $rule_element . ".*";
+				
+			} else {
+				print " [ERROR] Critical Failure\n" if defined($debug);
+				print " [DEBUG] $rule_element\n" if defined($debug);
+				print " [DEBUG] $raw_rule\n" if defined($debug);
+			}
+			
+		}
+		print " [DEBUG] [Regex] $raw_regex \n\n\n\n" if defined($debug);
+		
+		$sth->execute( $rule_port , $raw_regex , $rule_msg );
+		print "Filter Added  - $rule_msg \n";
+	}
+		
+	close(RULE_FILE);
+}
+
+
+
+
+
+
+
+
+
+
+
