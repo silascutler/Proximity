@@ -29,6 +29,7 @@
 use strict;
 use warnings;
 use DBI;
+use Config::Simple;
 
 my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
 
