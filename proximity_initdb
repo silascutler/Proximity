@@ -58,12 +58,13 @@ if ($#ARGV == 0 ) {
 ##########################################################################################
 
 ### Create database.
+my $initDB_Query = "CREATE USER $database_user IDENTIFIED BY \'$database_password\'; CREATE DATABASE $database_name; GRANT ALL PRIVILEGES ON $database_name.* TO $database_user; FLUSH PRIVILEGES;";
+
 print "\nCreating Database Scheme . . .\n\n";
 print "The Following commands will be run to initialize the DB and User. \n\tYou will need to enter your mysql root password to continue\n";
 print "\t$initDB_Query\n";
 print "If this fails, run this script with -nuke specified to start from scratch\n\n";
 
-my $initDB_Query = "CREATE USER $database_user IDENTIFIED BY \'$database_password\'; CREATE DATABASE $database_name; GRANT ALL PRIVILEGES ON $database_name.* TO $database_user; FLUSH PRIVILEGES;";
 system ("mysql -u root -p -e \"$initDB_Query\"");
 
 
