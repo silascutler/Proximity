@@ -7,20 +7,6 @@ Sinkhole Operational Framework for Automation and Reporting
 
 
 
-Required Software
------------------
-
-#### System Packages
-	sudo apt-get install build-essential zlib1g-dev libpcap-dev
-	sudo perl MCPAN -e 'install Proc::ProcessTable'
-
-#### Perl Modules 
-	sudo perl -MCPAN -e 'install DBI,Authen::SASL,MIME::Lite,Getopt::Long,Net::Pcap,NetPacket::Ethernet,NetPacket::IP,NetPacket::TCP,NetPacket::UDP,Config::Simple,IO::Socket::INET,PerlIO::gzip,Time::Local,Proc::Daemon'
-
-#### Software
-	ngrep (Will be removed in next version...hopefully)
-
-
 
 Overview
 --------
@@ -41,6 +27,23 @@ The setup is really up to the user.  Generally, what I have found to be the best
  1. Install System Packages, Modules, and Software
  2. Configure `proximity_config` with needed details
  3. Execute `proximity_initdb`
+
+
+
+
+Required Software
+-----------------
+
+#### System Packages
+	sudo apt-get install build-essential zlib1g-dev libpcap-dev
+	sudo perl MCPAN -e 'install Proc::ProcessTable'
+
+#### Perl Modules 
+	sudo perl -MCPAN -e 'install DBI,Authen::SASL,MIME::Lite,Getopt::Long,Net::Pcap,NetPacket::Ethernet,NetPacket::IP,NetPacket::TCP,NetPacket::UDP,Config::Simple,IO::Socket::INET,PerlIO::gzip,Time::Local,Proc::Daemon'
+
+#### Software
+	ngrep (Will be removed in next version...hopefully)
+
 
 
 
