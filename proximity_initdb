@@ -48,7 +48,7 @@ my $database_password = $config->param("Database.database_password");
 if ($#ARGV == 0 ) {
         if ($ARGV[0] =~ /nuke/){
                 print "Wiping Database - $database_name!!!\n\n";
-                system ("mysql -e \"drop database $database_name\" ");
+                system ("mysql -u root -p -e \"drop database $database_name; drop user $database_user; flush privileges;\" ");
                 exit;
         };
         exit;
@@ -58,8 +58,14 @@ if ($#ARGV == 0 ) {
 ##########################################################################################
 
 ### Create database.
-print "Creating Database Scheme . . .\n\n";
-system ("mysql -e \"create database $database_name\" ");
+print "\nCreating Database Scheme . . .\n\n";
+print "The Following commands will be run to initialize the DB and User. \n\tYou will need to enter your mysql root password to continue\n";
+print "\t$initDB_Query\n";
+print "If this fails, remove the user and database manually from your DBM, and rerun this script after flushing privileges\n\n";
+
+my $initDB_Query = "CREATE USER $database_user IDENTIFIED BY \'$database_password\'; CREATE DATABASE $database_name; GRANT ALL PRIVILEGES ON $database_name.* TO $database_user; FLUSH PRIVILEGES;";
+system ("mysql -u root -p -e \"$initDB_Query\"");
+
 
 ### Connect to created Database
 my $dbh = DBI->connect('dbi:mysql:'. $database_name,$database_user,$database_password) or die "Connection Error: $DBI::errstr\n";
