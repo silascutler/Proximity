@@ -26,7 +26,7 @@ The setup is really up to the user.  Generally, what I have found to be the best
 #### Installation
  1. Install System Packages, Modules, and Software
  2. Configure `proximity_config` with needed details
- 3. Execute `proximity_initdb`
+ 3. Execute `proximity_initdb` Please note that you *DO NOT* need to pre-configure your Database and User. This will do that for you. Just make sure you set the right values in the config before running this script.
 
 
 
