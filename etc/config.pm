@@ -25,72 +25,31 @@
 #	v0.8
 #############################################################################################
 
-use strict;
-use warnings;
-use Getopt::Long;
-
-require 'etc/config.pm';
-require 'lib/functions.pm';
-require 'lib/db.pm';
 
 
-$0 = "Proximity_Server";
+our $proc_pcap_proc_enabled = 'true';
+our $proc_pcap_path = '<PCAP PATH>';
 
-my ($help, $daemon);
-our $process = "true";
-
-
-#Enable functionality & Paths
-our ($proc_pcap_proc_enabled, $proc_pcap_path);
-our ($proc_dns_proc_enabled, $proc_dns_path);
-our ($user_pcap_path, $user_dns_path);
-
-our ( %raw_pcap_files, %raw_dns_logs, %tcp_pcap_filters, %udp_pcap_filters) = ();
+our $proc_dns_proc_enabled = 'true';
+our $proc_dns_path = '<DNS PATH>';
 
 
+our $database_host = 'localhost';
+our $database_name = '<DB NAME>';
+our $database_user = '<DB USER>';
+our $database_password = '<DB PASS>';
 
-usage() if ( (  ! GetOptions(
-    'help|?'	=>  \$help,
-    'import-pcap|ip=s'	=>	\$user_pcap_path,
-    'import-dns|id=s'	=>	\$user_dns_path,
-    'daemon|D'          =>	\$daemon
-            )or defined $help  )  );
+
+#This should be IP address will know itself by (=> the IP the sinkhole will be in PCAPs)
+our $var_sinkhole_address = '<SINKHOLE IP>';
+
+our $mail_From_Address = '<Sinkhole From Addrss@Domain.com>';
+our $mail_From_Address_Password = '<Email password>';
+our $mail_Mail_Server = '<MAIL SERVER>';
+our $mail_Mail_Server_Port = '<MAIL PORT>';
+our $mail_report_address = '<DESTINATION EMAIL>';
 
 
 
-$SIG{TERM} = sub { $process = "false" };
-
-intro_clear_screen();
-
-
-while ($process eq "true"){
-
-    if ( ($proc_pcap_proc_enabled eq "true" ) && (!defined($user_pcap_path)) && (!defined($user_dns_path)) ){
-    	load_pcap_files();
-	    foreach my $file (keys %raw_pcap_files){
-	        pcap_handler($file);
-	    }
-    }
-    
-    if ( ( $proc_dns_proc_enabled eq "true" ) && (!defined($user_pcap_path)) && (!defined($user_dns_path)) ){
-	    load_dns_files();
-	    foreach my $file (keys %raw_dns_logs ){
-		    dns_handler($file);
-	    }
-    }
-    sleep 60; 
-}
-
-
-
-
-
-
-
-
-
-
-
-
-###// Fin
+return 1;
 
