@@ -1,9 +1,13 @@
 
-
 Proximity
 =========
 
 Sinkhole Operational Framework for Automation and Reporting
+
+Proximity is a post-processer for PCAP data obtained from a malware sinkhole.  The key purpose is to sort and report on data collected.  The server component works by checking a folder on a regular basis for new PCAP files.  For each new file, every connection is logged to a backend database for storage and searching.  
+
+The connections are each processed over a set of analyst written filters that will attempt to match the connection based on known malware patterns.   Proximity will also attempt to extract any Meta data such as HTTP Host headers and connection details and will store those in the database  for faster searching.
+
 
 
 
