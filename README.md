@@ -40,7 +40,7 @@ Required Software
 
 #### System Packages
 	sudo apt-get install build-essential zlib1g-dev libpcap-dev
-	sudo perl MCPAN -e 'install Proc::ProcessTable'
+	sudo perl -MCPAN -e 'install Proc::ProcessTable'
 
 #### Perl Modules 
 	sudo perl -MCPAN -e 'install DBI,Authen::SASL,MIME::Lite,Getopt::Long,Net::Pcap,NetPacket::Ethernet,NetPacket::IP,NetPacket::TCP,NetPacket::UDP,Config::Simple,IO::Socket::INET,PerlIO::gzip,Time::Local,Proc::Daemon'
