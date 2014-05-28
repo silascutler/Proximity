@@ -31,12 +31,12 @@ use warnings;
 use DBI;
 use Config::Simple;
 
-my $config = new Config::Simple(filename=>"/opt/Sinkhole/root/usr/bin/proximity_config");
+require 'etc/config.pm';
 
-my $database_host = $config->param("Database.database_host");
-my $database_name = $config->param("Database.database_name");
-my $database_user = $config->param("Database.database_user");
-my $database_password = $config->param("Database.database_password");
+our $database_name;
+our $database_user;
+our $database_password;
+
 
 
 
