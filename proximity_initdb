@@ -58,7 +58,7 @@ if ($#ARGV == 0 ) {
 ##########################################################################################
 
 ### Create database.
-my $initDB_Query = "CREATE USER $database_user; CREATE DATABASE $database_name; GRANT ALL ON $database_name.* TO '$database_user'\@'localhost' IDENTIFIED BY '$database_password'; FLUSH PRIVILEGES;";
+my $initDB_Query = "CREATE DATABASE $database_name";
 
 print "\nCreating Database Scheme . . .\n\n";
 print "The Following commands will be run to initialize the DB and User. \n\tYou will need to enter your mysql root password to continue\n";
